@@ -1,0 +1,5 @@
+eclipse.preferences.version=1
+encoding//Main/main.c=UTF-8
+encoding//usbuser/cdc_uart.c=UTF-8
+encoding//usbuser/jtag_mpsse.c=UTF-8
+encoding//usbuser/usbd_user.c=UTF-8
