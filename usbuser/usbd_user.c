@@ -91,6 +91,16 @@ static struct usbd_endpoint jtag_in_ep = {
 struct usbd_interface jtag_intf;
 
 
+typedef struct {
+	int bitmode;
+	int latency_timer;
+	int timeout;
+}FTDEV;
+
+FTDEV ftdevs[2];
+
+
+
 /******************************************************************************/
 
 
@@ -115,13 +125,16 @@ static void jtag_out_callback(uint8_t ep, uint32_t nbytes)
 
 static void jtag_in_start(void)
 {
-	usbd_ep_start_write(JTAG_IN_EP, jtag_resp_buf, 2);
+	jtag_resp_size = 2;
+	jtag_resp_buf[0] = 0x02;
+	jtag_resp_buf[1] = 0x60;
+	usbd_ep_start_write(JTAG_IN_EP, jtag_resp_buf, jtag_resp_size);
 }
 
 static void jtag_in_callback(uint8_t ep, uint32_t nbytes)
 {
-	usbd_ep_start_write(JTAG_IN_EP, jtag_resp_buf, jtag_resp_size+2);
 	jtag_resp_size = 0;
+	ftdevs[0].timeout = time_ms + ftdevs[0].latency_timer;
 }
 
 
@@ -129,9 +142,6 @@ static void jtag_init(void)
 {
 	jtag_req_size = 0;
 	jtag_resp_size = 0;
-	jtag_resp_buf[0] = 0x02;
-	jtag_resp_buf[1] = 0x60;
-
 }
 
 
@@ -142,11 +152,15 @@ void jtag_handle(void)
 	if(jtag_req_size==0)
 		return;
 
+
 	while(jtag_resp_size);
 
 	int resp_size = jtag_execute(jtag_req_buf, jtag_req_size, jtag_resp_buf+2);
 	if(resp_size){
-		jtag_resp_size = resp_size;
+		jtag_resp_size = resp_size+2;
+		jtag_resp_buf[0] = 0x02;
+		jtag_resp_buf[1] = 0x61;
+		usbd_ep_start_write(JTAG_IN_EP, jtag_resp_buf, jtag_resp_size);
 	}
 
 	jtag_req_size = 0;
@@ -256,14 +270,6 @@ void cdc_in_unlock(int *val)
 
 /******************************************************************************/
 
-typedef struct {
-	int bitmode;
-	int latency_timer;
-	int timeout;
-}FTDEV;
-
-FTDEV ftdevs[2];
-
 
 /* Requests */
 #define SIO_RESET_REQUEST             0x00 /* Reset the port */
@@ -327,7 +333,11 @@ int usbd_vendor_handler(struct usb_setup_packet *setup, uint8_t **data, uint32_t
 
 	switch (setup->bRequest) {
 	case SIO_READ_EEPROM_REQUEST:
-		eeprom_buf = ftdi_eeprom_info[setup->wIndex];
+		if(setup->wIndex<0x40){
+			eeprom_buf = ftdi_eeprom_info[setup->wIndex];
+		}else{
+			eeprom_buf = 0;
+		}
 		*data = (uint8_t*)&eeprom_buf;
 		*len = 2;
 		break;
@@ -336,7 +346,7 @@ int usbd_vendor_handler(struct usb_setup_packet *setup, uint8_t **data, uint32_t
 			// RESET_SIO命令后，FTDI驱动会重置ep的状态。ep将要发送的数据也被清除了。
 			// 但FTDI驱动接下来会读ep，如果读不到就卡死了。这里设置一个16ms的定时器，
 			// 到期后会发送数据给驱动。
-			ftdevs[port-1].timeout = time_ms + 16;
+			ftdevs[port-1].timeout = time_ms + ftdevs[port-1].latency_timer;
 		}
 		break;
 	case SIO_SET_MODEM_CTRL_REQUEST:
@@ -368,9 +378,9 @@ int usbd_vendor_handler(struct usb_setup_packet *setup, uint8_t **data, uint32_t
 		}
 		break;
 	case SIO_POLL_MODEM_STATUS_REQUEST:
-		eeprom_buf = 0x0000;
+		eeprom_buf = 0x6002;
 		*data = (uint8_t*)&eeprom_buf;
-		*len = 1;
+		*len = 2;
 		break;
 	case SIO_SET_EVENT_CHAR_REQUEST:
 		break;
@@ -408,7 +418,9 @@ void usbd_event_handler(uint8_t event)
 	switch (event) {
 	case USBD_EVENT_RESET:
 		ftdevs[0].timeout = 0;
+		ftdevs[0].latency_timer = 16;
 		ftdevs[1].timeout = 0;
+		ftdevs[1].latency_timer = 16;
 		cdcuart_reset(&cdc_uarts[1]);
 		break;
 	case USBD_EVENT_CONNECTED:
@@ -438,7 +450,9 @@ void usbd_event_handler(uint8_t event)
 void usb_dc_user_init(void)
 {
 	ftdevs[0].timeout = 0;
+	ftdevs[0].latency_timer = 16;
 	ftdevs[1].timeout = 0;
+	ftdevs[1].latency_timer = 16;
 
 	jtag_init();
 
