@@ -56,10 +56,6 @@ void gpio_mode(int group, int bit, int mode, int pullup);
 void gpio_set(int group, int bit, int val);
 int  gpio_get(int group, int bit);
 
-void cdc_pause(int id);
-void cdc_resume(int id);
-void cdc_soft_timer(void);
-
 
 /******************************************************************************/
 
@@ -85,21 +81,6 @@ int memcmp(const void *dst, const void *src, unsigned int n);
 
 
 void simple_shell(void);
-
-
-/******************************************************************************/
-
-
-int jtag_setup(void);
-int jtag_exit(void);
-int jtag_execute(uint8_t *req, int req_size, uint8_t *resp);
-
-int jtag_trans_msb_0(int data, int bcnt, int delay);
-int jtag_trans_msb_1(int data, int bcnt, int delay);
-int jtag_trans_lsb_0(int data, int bcnt, int delay);
-int jtag_trans_lsb_1(int data, int bcnt, int delay);
-int jtag_trans_tms_0(int data, int bcnt, int delay);
-int jtag_trans_tms_1(int data, int bcnt, int delay);
 
 
 /******************************************************************************/

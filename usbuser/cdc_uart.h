@@ -68,3 +68,7 @@ void cdcuart_init(CDC_UART *cu);
 
 void cdc_recv_start(CDC_UART *cu);
 void cdc_send_startup(CDC_UART *cu);
+
+void cdc_pause(int id);
+void cdc_resume(int id);
+

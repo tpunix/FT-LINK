@@ -1,7 +1,7 @@
 
 
 #include "main.h"
-
+#include "ftdi.h"
 
 /******************************************************************************/
 
@@ -350,14 +350,12 @@ int main(void)
 	printk("    mip: %08x\n", read_csr(mip));
 
 #if 1
-	void usb_dc_user_init(void);
 	usb_dc_user_init();
 
-	void jtag_handle(void);
 	reset_timer();
 	while(1){
 		soft_timer();
-		cdc_soft_timer();
+		ftdi_timer_handle();
 		//WFI(); // WFI会影响正在工作的外设.
 		jtag_handle();
 	}

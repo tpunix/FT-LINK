@@ -2,18 +2,17 @@
 
 #include "main.h"
 #include "usbd_core.h"
+#include "ftdi.h"
 
 /******************************************************************************/
 
-#define DIR_OUT 1  // push-poll output
-#define DIR_IN  4  // float input
 
 static void set_tdi(int val)
 {
 	if(val){
-		GPIOB->BSHR = 1<<10;
+		GPIOB->BSHR = TDI_MASK;
 	}else{
-		GPIOB->BCR  = 1<<10;
+		GPIOB->BCR  = TDI_MASK;
 	}
 }
 
@@ -21,9 +20,9 @@ static void set_tdi(int val)
 static void set_tck(int val)
 {
 	if(val){
-		GPIOB->BSHR = 1<<13;
+		GPIOB->BSHR = TCK_MASK;
 	}else{
-		GPIOB->BCR  = 1<<13;
+		GPIOB->BCR  = TCK_MASK;
 	}
 }
 
@@ -31,15 +30,15 @@ static void set_tck(int val)
 static void set_tms(int val)
 {
 	if(val){
-		GPIOB->BSHR = 1<<14;
+		GPIOB->BSHR = TMS_MASK;
 	}else{
-		GPIOB->BCR  = 1<<14;
+		GPIOB->BCR  = TMS_MASK;
 	}
 }
 
 static int get_tdo(void)
 {
-	return (GPIOB->INDR >> 11) & 1;
+	return (GPIOB->INDR >> GPIO_TDO) & 1;
 }
 #endif
 
@@ -54,19 +53,19 @@ static void set_gpio(int id, int val, int dir)
 
 	pd = (dir&1)? DIR_OUT : DIR_IN;
 	pv = (val&1)? 1: 0;
-	gpio_mode(1, 13, pd, pv); //  TCK
+	gpio_mode(1, GPIO_TCK, pd, pv); //  TCK
 
 	pd = (dir&2)? DIR_OUT : DIR_IN;
 	pv = (val&2)? 1: 0;
-	gpio_mode(1, 10, pd, pv); //  TCK
+	gpio_mode(1, GPIO_TDI, pd, pv); //  TDI
 
 	pd = (dir&4)? DIR_OUT : DIR_IN;
 	pv = (val&4)? 1: 0;
-	gpio_mode(1, 11, pd, pv); //  TCK
+	gpio_mode(1, GPIO_TDO, pd, pv); //  TDO
 
 	pd = (dir&8)? DIR_OUT : DIR_IN;
 	pv = (val&8)? 1: 0;
-	gpio_mode(1, 14, pd, pv); //  TCK
+	gpio_mode(1, GPIO_TMS, pd, pv); //  TMS
 }
 
 static int get_gpio(int id)
@@ -76,10 +75,10 @@ static int get_gpio(int id)
 	if(id==1)
 		return 0xff;
 
-	if((GPIOB->INDR & (1<<13))) val |= 0x01;
-	if((GPIOB->INDR & (1<<10))) val |= 0x02;
-	if((GPIOB->INDR & (1<<11))) val |= 0x04;
-	if((GPIOB->INDR & (1<<14))) val |= 0x08;
+	if((GPIOB->INDR & (1<<GPIO_TCK))) val |= 0x01;
+	if((GPIOB->INDR & (1<<GPIO_TDI))) val |= 0x02;
+	if((GPIOB->INDR & (1<<GPIO_TDO))) val |= 0x04;
+	if((GPIOB->INDR & (1<<GPIO_TMS))) val |= 0x08;
 
 	return val;
 }
@@ -90,10 +89,10 @@ static int get_gpio(int id)
 int jtag_setup(void)
 {
 	//cdc_pause(0);
-	gpio_mode(1, 13, DIR_OUT, 1); //  TCK: out
-	gpio_mode(1, 10, DIR_OUT, 1); //  TDI: out
-	gpio_mode(1, 11, DIR_IN , 1); //  TDO: in
-	gpio_mode(1, 14, DIR_OUT, 1); //  TMS: out
+	gpio_mode(1, GPIO_TCK, DIR_OUT, 1); //  TCK: out
+	gpio_mode(1, GPIO_TDI, DIR_OUT, 1); //  TDI: out
+	gpio_mode(1, GPIO_TDO, DIR_IN , 1); //  TDO: in
+	gpio_mode(1, GPIO_TMS, DIR_OUT, 1); //  TMS: out
 	gpio_mode(2,  6, DIR_OUT, 1); // TRST: out
 
 	return 0;
@@ -163,6 +162,7 @@ int jtag_delay_value = 1;
 //       delay = (160+1000*div)/258;
 static uint8_t delay_6M[6] = {1, 5, 8, 12, 16, 20};
 
+// freq = 30M/(1+div);
 //       1000*(div+1)/30 = 43*delay + 140;
 //       delay = (100*div-320)/129;
 static uint8_t delay_30M[16] = {1, 1, 1, 1, 1, 2, 3, 4, 4, 5, 6, 7, 8, 8, 8, 9};
@@ -189,10 +189,9 @@ static void jtag_set_delay(int div)
 // +ve: 在clk上升沿将数据发出。对方将在下降沿看到数据。clk空闲时为高。---- --|__|-
 // -ve: 在clk下降沿将数据发出。对方将在上升沿看到数据。clk空闲时为低。____ __|--|_
 
-int jtag_execute(uint8_t *req, int req_size, uint8_t *resp)
+int jtag_execute(uint8_t *req, int req_size)
 {
 	int rp = 0;
-	int wp = 0;
 
 	//printk("\nJTAG_EXEC: %d bytes\n", req_size);
 
@@ -209,7 +208,7 @@ int jtag_execute(uint8_t *req, int req_size, uint8_t *resp)
 					break;
 				case 0x81:
 				case 0x83:
-					resp[wp++] = get_gpio((m_cmd>>1)&1);
+					jtag_write(get_gpio((m_cmd>>1)&1));
 					break;
 				case 0x84:
 					m_ctrl |=  CTRL_LOOPBACK;
@@ -221,6 +220,7 @@ int jtag_execute(uint8_t *req, int req_size, uint8_t *resp)
 					m_state = MPSSE_RCV0;
 					break;
 				case 0x87: // Flush buffer to pc
+					jtag_flush_resp();
 					break;
 				case 0x88: // Wait GPIOL1 high
 					break;
@@ -247,9 +247,8 @@ int jtag_execute(uint8_t *req, int req_size, uint8_t *resp)
 				case 0x97:
 					break;
 				default:
-					resp[wp++] = 0xfa;
-					resp[wp++] = m_cmd;
-					m_state = MPSSE_ERROR;
+					jtag_write(0xfa);
+					jtag_write(m_cmd);
 					break;
 				}
 			}else{
@@ -272,9 +271,8 @@ int jtag_execute(uint8_t *req, int req_size, uint8_t *resp)
 					jtag_trans_func = jtag_trans_lsb_0;
 				}
 				if(jtag_trans_func==NULL){
-					resp[wp++] = 0xfa;
-					resp[wp++] = m_cmd;
-					m_state = MPSSE_ERROR;
+					jtag_write(0xfa);
+					jtag_write(m_cmd);
 				}else{
 					m_state = MPSSE_RCV_LENGTH_L;
 				}
@@ -335,7 +333,7 @@ int jtag_execute(uint8_t *req, int req_size, uint8_t *resp)
 			rdata = jtag_trans_func(wdata, bcnt, jtag_delay_value);
 
 			if(m_cmd&CF_RTDO){
-				resp[wp++] = rdata;
+				jtag_write(rdata);
 			}
 			if((m_cmd&CF_BIT) || (m_len==0)){
 				m_state = MPSSE_IDLE;
@@ -354,7 +352,7 @@ int jtag_execute(uint8_t *req, int req_size, uint8_t *resp)
 			rdata = jtag_trans_func(wdata, bcnt, jtag_delay_value);
 
 			if(m_cmd&CF_RTDO){
-				resp[wp++] = rdata;
+				jtag_write(rdata);
 			}
 			m_state = MPSSE_IDLE;
 			break;
@@ -391,7 +389,7 @@ int jtag_execute(uint8_t *req, int req_size, uint8_t *resp)
 		}
 	}
 
-	return wp;
+	return rp;
 }
 
 

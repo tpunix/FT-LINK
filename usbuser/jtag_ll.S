@@ -3,19 +3,8 @@
 // 这里手写一下，能有6M的速度，并可以方便的调整延时参数
 //
 
+#include "ftdi.h"
 
-#define GPIO_BASE      0x40010c00  // GPIOB
-                                   // 如果4个IO不在同一个bank，则需要另外一个寄存器保存另一个BASE。
-#define GPIO_IN        0x08
-#define GPIO_SET       0x10
-#define GPIO_CLR       0x14
-
-#define TCK_MASK       0x2000      // PB13
-#define TMS_MASK       0x4000      // PB14
-#define TDI_MASK       0x0400      // PB10
-
-#define TDO_SHIFT_MSB  11          // PB11
-#define TDO_SHIFT_LSB  4           // 如果GPIO编号小于7，对应的移位指令要改为左移。
 
 // int jtag_trans_func(int data, int bcnt, int delay);
 //                         a0        a1        a2

@@ -4,6 +4,7 @@
 
 #include "usbd_core.h"
 #include "cdc_uart.h"
+#include "ftdi.h"
 
 
 /******************************************************************************/
@@ -104,36 +105,38 @@ FTDEV ftdevs[2];
 /******************************************************************************/
 
 
-#define JTAG_PACKET_SIZE  USB_PACKET_SIZE
+#define JTAG_OUT_SIZE  USB_PACKET_SIZE
+#define JTAG_IN_SIZE   USB_PACKET_SIZE*8
 
-static uint8_t jtag_req_buf[JTAG_PACKET_SIZE];
-static uint8_t jtag_resp_buf[JTAG_PACKET_SIZE];
+static uint8_t jtag_req_buf[JTAG_OUT_SIZE];
+static uint8_t jtag_resp_buf[JTAG_IN_SIZE];
 static volatile int jtag_req_size;
 volatile int jtag_resp_size;
 
 
 static void jtag_out_start(void)
 {
-	usbd_ep_start_read(JTAG_OUT_EP, jtag_req_buf, JTAG_PACKET_SIZE);
+	usbd_ep_start_read(JTAG_OUT_EP, jtag_req_buf, JTAG_OUT_SIZE);
 }
 
 static void jtag_out_callback(uint8_t ep, uint32_t nbytes)
 {
 	jtag_req_size = nbytes;
+	ftdevs[0].timeout = 0x7fffffff;
 	//printk("out: %d\n", nbytes);
 }
 
 static void jtag_in_start(void)
 {
-	jtag_resp_size = 2;
-	jtag_resp_buf[0] = 0x02;
-	jtag_resp_buf[1] = 0x60;
 	usbd_ep_start_write(JTAG_IN_EP, jtag_resp_buf, jtag_resp_size);
 }
 
 static void jtag_in_callback(uint8_t ep, uint32_t nbytes)
 {
-	jtag_resp_size = 0;
+	//printk(" in: %d\n", nbytes);
+	if(nbytes>2){
+		jtag_resp_size = 2;
+	}
 	ftdevs[0].timeout = time_ms + ftdevs[0].latency_timer;
 }
 
@@ -141,27 +144,47 @@ static void jtag_in_callback(uint8_t ep, uint32_t nbytes)
 static void jtag_init(void)
 {
 	jtag_req_size = 0;
-	jtag_resp_size = 0;
+
+	jtag_resp_buf[0] = 0x02;
+	jtag_resp_buf[1] = 0x60;
+	jtag_resp_size = 2;
 }
 
 
-int jtag_execute(uint8_t *req, int req_size, uint8_t *resp);
+void jtag_flush_resp(void)
+{
+	usbd_ep_start_write(JTAG_IN_EP, jtag_resp_buf, jtag_resp_size);
+	while(jtag_resp_size>2);
+}
+
+
+void jtag_write(int byte)
+{
+	// FT2232看起来有一个非常大的in缓存，但一旦到了512字节的边界，就会插入02 60
+	if((jtag_resp_size%USB_PACKET_SIZE)==0){
+		jtag_resp_buf[jtag_resp_size+0] = 0x02;
+		jtag_resp_buf[jtag_resp_size+1] = 0x60;
+		jtag_resp_size += 2;
+	}
+
+	jtag_resp_buf[jtag_resp_size] = byte;
+	jtag_resp_size += 1;
+
+	if(jtag_resp_size == JTAG_IN_SIZE){
+		usbd_ep_start_write(JTAG_IN_EP, jtag_resp_buf, jtag_resp_size);
+		while(jtag_resp_size>2);
+	}
+}
+
 
 void jtag_handle(void)
 {
+
 	if(jtag_req_size==0)
 		return;
 
-
-	while(jtag_resp_size);
-
-	int resp_size = jtag_execute(jtag_req_buf, jtag_req_size, jtag_resp_buf+2);
-	if(resp_size){
-		jtag_resp_size = resp_size+2;
-		jtag_resp_buf[0] = 0x02;
-		jtag_resp_buf[1] = 0x61;
-		usbd_ep_start_write(JTAG_IN_EP, jtag_resp_buf, jtag_resp_size);
-	}
+	jtag_execute(jtag_req_buf, jtag_req_size);
+	ftdevs[0].timeout = time_ms + ftdevs[0].latency_timer;
 
 	jtag_req_size = 0;
 	jtag_out_start();
@@ -302,7 +325,7 @@ static uint16_t ftdi_eeprom_info[] =
 };
 
 
-void cdc_soft_timer(void)
+void ftdi_timer_handle(void)
 {
 	if(ftdevs[0].timeout){
 		if(time_ms>=ftdevs[0].timeout){
@@ -387,7 +410,7 @@ int usbd_vendor_handler(struct usb_setup_packet *setup, uint8_t **data, uint32_t
 	case SIO_SET_ERROR_CHAR_REQUEST:
 		break;
 	case SIO_SET_LATENCY_TIMER_REQUEST:
-		ftdevs[port-1].latency_timer = setup->wValue;
+		ftdevs[port-1].latency_timer = setup->wValue + 1;
 		break;
 	case SIO_GET_LATENCY_TIMER_REQUEST:
 		*data = (uint8_t*)&ftdevs[port-1].latency_timer;
